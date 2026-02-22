@@ -1,0 +1,45 @@
+{
+  "name": "My D&D Calendar",
+  "year_zero": 1,
+
+  "week_length": 7,
+  "weekdays": ["Månedag", "Tørstedag", "Oldensdag", "Tordendag", "Fridag", "Lykkendag", "Sorgendag"],
+
+  "months": [
+    {"name": "Celet", "days": 61},
+    {"name": "Wir", "days": 60},
+    {"name": "Vatu", "days": 61},
+    {"name": "Yittu", "days": 60},
+    {"name": "Sabast", "days": 61},
+    {"name": "Hansmer", "days": 60}
+  ],
+
+  "festivals": [
+    {"name": "Første flamme", "kind": "before_month", "month": 1},
+    {"name": "Dagen av kroner", "kind": "after_month", "month": 4},
+    {"name": "Blood manen", "kind": "after_month", "month": 3},
+
+    {"name": "Floating Festival Day", "kind": "extra", "day": 999}
+  ],
+
+  "moons": [
+    {
+      "name": "Sølvmånen",
+      "cycle": 60,
+      "offset": 0,
+      "phases": [
+        {"name": "Waxing", "start": 1, "end": 10},
+        {"name": "Full", "start": 11, "end": 15},
+        {"name": "Waning", "start": 16, "end": 25},
+        {"name": "Dark", "start": 26, "end": 60}
+      ]
+    }
+  ],
+
+  "leap": {
+    "rule": "every_n_years",
+    "n": 5,
+    "add_days_to_month": 5,
+    "days": 1
+  }
+}

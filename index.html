@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>D&D World Calendar</title>
+  <style>
+    body { font-family: system-ui, Segoe UI, Arial, sans-serif; margin: 0; background: #0f1115; color: #e7e7e7; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 18px; }
+    .top { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+    .card { background: #171a21; border: 1px solid #2a2f3a; border-radius: 14px; padding: 14px 16px; }
+    h1 { font-size: 18px; margin: 0 0 6px 0; }
+    .muted { color: #b7bdc8; font-size: 13px; }
+    .row { display: grid; grid-template-columns: 380px 1fr; gap: 14px; margin-top: 14px; }
+    @media (max-width: 920px) { .row { grid-template-columns: 1fr; } }
+
+    .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    button { background: #232838; border: 1px solid #343b52; color: #e7e7e7; border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+    button:hover { background: #2a3045; }
+
+    .monthTitle { display:flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .monthTitle h2 { margin: 0; font-size: 16px; }
+    .grid { display:grid; gap: 6px; margin-top: 10px; }
+    .dow { display:grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+    .dow div { text-align:center; font-size: 12px; color:#b7bdc8; padding: 6px 0; }
+
+    .cells { display:grid; grid-auto-flow: row; gap: 6px; }
+    .week { display:grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+    .cell { border: 1px solid #2a2f3a; background:#11141b; border-radius: 12px; min-height: 64px; padding: 8px; }
+    .cell .n { font-weight: 700; font-size: 14px; }
+    .cell.today { outline: 2px solid #6aa6ff; }
+    .cell.empty { background: transparent; border: 1px dashed #2a2f3a; opacity: 0.4; }
+    .small { font-size: 12px; color:#b7bdc8; margin-top: 6px; line-height: 1.3; }
+
+    .err { color: #ff7b7b; white-space: pre-wrap; }
+    a { color: #8ab4ff; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="card" style="flex:1; min-width: 280px;">
+        <h1 id="calName">D&D World Calendar</h1>
+        <div class="muted" id="loadedFrom">Loading…</div>
+      </div>
+      <div class="card" style="min-width: 280px;">
+        <div style="font-weight:700;margin-bottom:6px;">Today</div>
+        <div id="todayLine">—</div>
+        <div class="small" id="moonLine"></div>
+        <div class="small" id="festLine"></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="card">
+        <div style="font-weight:700;">View</div>
+        <div class="muted">View-only. Update <code>calendar_state.json</code> to change the official date.</div>
+
+        <div class="btns">
+          <button id="prevBtn">◀ Prev Month</button>
+          <button id="nextBtn">Next Month ▶</button>
+          <button id="jumpTodayBtn">Jump to Today</button>
+        </div>
+
+        <div class="small" style="margin-top:10px;">
+          Tip: If players see an older version, they may need a refresh (Ctrl+F5).
+        </div>
+
+        <div class="err" id="errorBox" style="display:none;margin-top:10px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="monthTitle">
+          <h2 id="monthTitle">—</h2>
+          <div class="muted" id="monthMeta">—</div>
+        </div>
+
+        <div class="grid">
+          <div class="dow" id="dowRow"></div>
+          <div class="cells" id="monthGrid"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(async function () {
+  const $ = (id) => document.getElementById(id);
+
+  function monthDays(cfg, year, month1) {
+    const base = Number(cfg.months[month1 - 1].days);
+    const leap = cfg.leap || { rule: "none" };
+    if (leap.rule === "every_n_years") {
+      const n = Number(leap.n || 0);
+      const addMonth = Number(leap.add_days_to_month || 0);
+      const addDays = Number(leap.days || 0);
+      if (n > 0 && (year % n === 0) && month1 === addMonth) return base + addDays;
+    }
+    return base;
+  }
+
+  function extraFestivalCount(cfg) {
+    return (cfg.festivals || []).filter(f => f.kind === "extra").length;
+  }
+
+  function yearLength(cfg, year) {
+    let total = 0;
+    for (let m = 1; m <= cfg.months.length; m++) total += monthDays(cfg, year, m);
+    total += extraFestivalCount(cfg);
+    return total;
+  }
+
+  function computeAbsoluteDay(cfg, year, month, day) {
+    if (year < cfg.year_zero) throw new Error("Year before year_zero not supported.");
+    let absd = 0;
+    for (let y = cfg.year_zero; y < year; y++) absd += yearLength(cfg, y);
+    for (let m = 1; m < month; m++) absd += monthDays(cfg, year, m);
+    absd += (day - 1);
+    return absd;
+  }
+
+  function weekdayName(cfg, dow) {
+    if (cfg.weekdays && cfg.weekdays.length) return cfg.weekdays[dow % cfg.weekdays.length];
+    return `Day${(dow % Math.max(cfg.week_length, 1)) + 1}`;
+  }
+
+  function listBoundaryFestivals(cfg, month1, where) {
+    return (cfg.festivals || [])
+      .filter(f => f.kind === where && Number(f.month) === month1)
+      .map(f => f.name);
+  }
+
+  function moonInfo(cfg, absDay) {
+    const out = [];
+    for (const m of (cfg.moons || [])) {
+      const name = m.name || "Moon";
+      const cycle = Math.max(Number(m.cycle || 30), 1);
+      const offset = Number(m.offset || 0);
+      const dayInCycle = (absDay + offset) % cycle; // 0..cycle-1
+      const dc1 = dayInCycle + 1;
+
+      let phase = "Unknown";
+      if (Array.isArray(m.phases) && m.phases.length) {
+        for (const p of m.phases) {
+          if (Number(p.start) <= dc1 && dc1 <= Number(p.end)) { phase = p.name; break; }
+        }
+      } else {
+        const q = Math.max(Math.floor(cycle / 4), 1);
+        if (dayInCycle < q) phase = "Waxing";
+        else if (dayInCycle < 2*q) phase = "Full";
+        else if (dayInCycle < 3*q) phase = "Waning";
+        else phase = "Dark";
+      }
+      out.push({ name, phase, day: dc1 });
+    }
+    return out;
+  }
+
+  function renderMonth(cfg, state, viewYear, viewMonth) {
+    const mname = cfg.months[viewMonth - 1].name;
+    const mdays = monthDays(cfg, viewYear, viewMonth);
+    $("monthTitle").textContent = `${mname} — Year ${viewYear}`;
+    $("monthMeta").textContent = `Days: ${mdays} | Week length: ${cfg.week_length}`;
+
+    // Weekday header
+    const weekLen = Math.max(Number(cfg.week_length || 7), 1);
+    const weekdays = (cfg.weekdays && cfg.weekdays.length) ? cfg.weekdays : Array.from({length: weekLen}, (_,i)=>`D${i+1}`);
+    $("dowRow").innerHTML = "";
+    weekdays.slice(0, weekLen).forEach(w => {
+      const d = document.createElement("div");
+      d.textContent = w;
+      $("dowRow").appendChild(d);
+    });
+
+    // First day offset
+    const absFirst = computeAbsoluteDay(cfg, viewYear, viewMonth, 1);
+    const dowFirst = absFirst % weekLen;
+
+    // Build weeks
+    $("monthGrid").innerHTML = "";
+    const totalCells = dowFirst + mdays;
+    const rows = Math.max(Math.ceil(totalCells / weekLen), 1);
+
+    let dayNum = 1;
+    for (let r = 0; r < rows; r++) {
+      const week = document.createElement("div");
+      week.className = "week";
+      for (let c = 0; c < weekLen; c++) {
+        const idx = r * weekLen + c;
+        const cell = document.createElement("div");
+        cell.className = "cell";
+
+        if (idx < dowFirst || dayNum > mdays) {
+          cell.classList.add("empty");
+          week.appendChild(cell);
+          continue;
+        }
+
+        const n = document.createElement("div");
+        n.className = "n";
+        n.textContent = String(dayNum);
+        cell.appendChild(n);
+
+        if (viewYear === state.year && viewMonth === state.month && dayNum === state.day) {
+          cell.classList.add("today");
+        }
+
+        dayNum++;
+        week.appendChild(cell);
+      }
+      $("monthGrid").appendChild(week);
+    }
+  }
+
+  function renderToday(cfg, state) {
+    const mname = cfg.months[state.month - 1].name;
+    const absd = computeAbsoluteDay(cfg, state.year, state.month, state.day);
+    const dow = absd % Math.max(cfg.week_length, 1);
+    const wname = weekdayName(cfg, dow);
+
+    $("todayLine").textContent = `${wname}, ${state.day} ${mname}, Year ${state.year}`;
+
+    const moons = moonInfo(cfg, absd);
+    $("moonLine").textContent = moons.length
+      ? ("Moons: " + moons.map(x => `${x.name}: ${x.phase} (Day ${x.day})`).join(" | "))
+      : "Moons: (none)";
+
+    const fest = [];
+    if (state.day === 1) {
+      const before = listBoundaryFestivals(cfg, state.month, "before_month");
+      if (before.length) fest.push("Before month: " + before.join("; "));
+    }
+    if (state.day === monthDays(cfg, state.year, state.month)) {
+      const after = listBoundaryFestivals(cfg, state.month, "after_month");
+      if (after.length) fest.push("After month: " + after.join("; "));
+    }
+    $("festLine").textContent = fest.length ? ("Festivals: " + fest.join(" | ")) : "Festivals: (none today)";
+  }
+
+  function showError(e) {
+    $("errorBox").style.display = "block";
+    $("errorBox").textContent = String(e && e.stack ? e.stack : e);
+  }
+
+  try {
+    // Important: files must be in the same folder as index.html on your website
+    const [cfgRes, stRes] = await Promise.all([
+      fetch("./calendar_config.json", { cache: "no-store" }),
+      fetch("./calendar_state.json", { cache: "no-store" }),
+    ]);
+
+    if (!cfgRes.ok) throw new Error("Could not load calendar_config.json (HTTP " + cfgRes.status + ")");
+    if (!stRes.ok) throw new Error("Could not load calendar_state.json (HTTP " + stRes.status + ")");
+
+    const cfg = await cfgRes.json();
+    const state = await stRes.json();
+
+    $("calName").textContent = cfg.name || "D&D World Calendar";
+    $("loadedFrom").textContent = "Loaded config + state successfully.";
+
+    // View month starts at “today”
+    let viewYear = Number(state.year);
+    let viewMonth = Number(state.month);
+
+    renderToday(cfg, {year:Number(state.year), month:Number(state.month), day:Number(state.day)});
+    renderMonth(cfg, {year:Number(state.year), month:Number(state.month), day:Number(state.day)}, viewYear, viewMonth);
+
+    $("prevBtn").onclick = () => {
+      viewMonth--;
+      if (viewMonth < 1) { viewMonth = cfg.months.length; viewYear--; }
+      renderMonth(cfg, state, viewYear, viewMonth);
+    };
+    $("nextBtn").onclick = () => {
+      viewMonth++;
+      if (viewMonth > cfg.months.length) { viewMonth = 1; viewYear++; }
+      renderMonth(cfg, state, viewYear, viewMonth);
+    };
+    $("jumpTodayBtn").onclick = () => {
+      viewYear = Number(state.year);
+      viewMonth = Number(state.month);
+      renderMonth(cfg, state, viewYear, viewMonth);
+    };
+
+  } catch (e) {
+    showError(e);
+  }
+})();
+</script>
+</body>
+</html>
